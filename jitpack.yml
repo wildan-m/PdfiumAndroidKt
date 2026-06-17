@@ -1,4 +1,7 @@
 jdk:
   - openjdk17
+before_install:
+  - yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+  - yes | sdkmanager --licenses > /dev/null 2>&1 || true
 install:
-  - ./gradlew :pdfiumandroid:publishToMavenLocal -x test
+  - ./gradlew :pdfiumandroid:publishToMavenLocal -x test --no-daemon
