@@ -141,7 +141,18 @@ class PdfDocument(
      */
     fun openPage(pageIndex: Int): PdfPage {
         synchronized(PdfiumCore.lock) {
-            check(!isClosed) { "Already closed" }
+            // Honor the configured AlreadyClosedBehavior instead of always throwing.
+            // Every other PdfDocument method routes its closed-state check through
+            // handleAlreadyClosed(); openPage/openTextPage were the only ones that did
+            // not, so AlreadyClosedBehavior.IGNORE never reached the exact call that
+            // crashes when a render lands on a just-closed document (see openPage in
+            // PdfiumCore.renderPageBitmap). When IGNORE is configured we return a page
+            // bound to this (closed) document; every PdfPage operation already guards on
+            // doc.isClosed via handleAlreadyClosed(), so the render is silently dropped
+            // with no native call instead of throwing on the renderer thread.
+            if (handleAlreadyClosed(isClosed)) {
+                return PdfPage(this, pageIndex, INVALID_PAGE_PTR, pageMap)
+            }
             if (pageMap.containsKey(pageIndex)) {
                 pageMap[pageIndex]?.let {
                     it.count++
@@ -376,7 +387,11 @@ class PdfDocument(
     @Deprecated("Use PdfPage.openTextPage instead", ReplaceWith("page.openTextPage()"))
     fun openTextPage(page: PdfPage): PdfTextPage {
         synchronized(PdfiumCore.lock) {
-            check(!isClosed) { "Already closed" }
+            // See openPage(): honor AlreadyClosedBehavior.IGNORE instead of throwing so a
+            // text-page open that races with document teardown is dropped, not fatal.
+            if (handleAlreadyClosed(isClosed)) {
+                return PdfTextPage(this, page.pageIndex, INVALID_PAGE_PTR, textPageMap)
+            }
             if (textPageMap.containsKey(page.pageIndex)) {
                 textPageMap[page.pageIndex]?.let {
                     it.count++
@@ -482,6 +497,12 @@ class PdfDocument(
 
     companion object {
         private val TAG = PdfDocument::class.java.name
+
+        // Sentinel native pointer used for the no-op PdfPage/PdfTextPage returned when a
+        // page is opened on an already-closed document under AlreadyClosedBehavior.IGNORE.
+        // It is never dereferenced: every PdfPage/PdfTextPage operation short-circuits via
+        // handleAlreadyClosed(doc.isClosed) before touching the native pointer.
+        private const val INVALID_PAGE_PTR = -1L
 
         const val FPDF_INCREMENTAL = 1
         const val FPDF_NO_INCREMENTAL = 2
